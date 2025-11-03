@@ -8,19 +8,18 @@ const LIST_URL = (id, page = 1) =>
 
 /* Türkçe + İngilizce aylar – aksan/noktasız varyasyonlarla birlikte */
 const TR_EN_MONTHS = {
-  // TR
-  ocak:0, şubat:1, subat:1, mart:2, nisan:3, mayıs:4, mayis:4, haziran:5, temmuz:6,
-  ağustos:7, agustos:7, eylül:8, eylul:8, ekim:9, kasım:10, kasim:10, aralık:11, aralik:11,
-  // EN
+  ocak:0, şubat:1, subat:1, mart:2, nisan:3, mayıs:4, mayis:4,
+  haziran:5, temmuz:6, ağustos:7, agustos:7, eylül:8, eylul:8,
+  ekim:9, kasım:10, kasim:10, aralık:11, aralik:11,
   january:0, february:1, march:2, april:3, may:4, june:5, july:6,
   august:7, september:8, october:9, november:10, december:11
 };
 const clean = (s="") => s.trim()
   .toLowerCase("tr")
   .normalize("NFKD")
-  .replace(/[\u0300-\u036f]/g,""); // aksanları sil
+  .replace(/[\u0300-\u036f]/g,"");
 
-/* "03.11.2025", "03/11/2025", "03-11-2025", "03 Kasım 2025", "22 August 2024" hepsini yakala */
+/* "03.11.2025", "03/11/2025", "03 Kasım 2025", "22 August 2024" vs. */
 function parseFlexibleDate(text = "") {
   const s = (text || "").replace(/\s+/g, " ").trim();
   if (!s) return new Date(0);
@@ -35,7 +34,7 @@ function parseFlexibleDate(text = "") {
     return isNaN(dt.getTime()) ? new Date(0) : dt;
   }
 
-  // dd Month yyyy  (TR ya da EN ay adı)
+  // dd Month yyyy (TR/EN)
   const mText = s.match(/(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğiöşü\.]+)\s+(\d{4})/);
   if (mText) {
     const d = parseInt(mText[1],10);
@@ -53,24 +52,14 @@ function parseFlexibleDate(text = "") {
 async function fetchDetailDateISO(url) {
   try {
     const res = await fetch(url, {
-      headers: {
-        "User-Agent": "GaziDuyuruBot/1.0",
-        "Accept-Language":"tr-TR,tr;q=0.9"
-      }
+      headers: { "User-Agent": "GaziDuyuruBot/1.0", "Accept-Language":"tr-TR,tr;q=0.9" }
     });
     if (!res.ok) return null;
     const html = await res.text();
     const $ = cheerio.load(html);
-
-    // Sayfada genelde başlığın hemen altında "22 August 2024 | 17:00" gibi bir satır oluyor.
-    // Tüm metinden makul bir tarih çekelim:
     const bodyText = $("body").text().replace(/\s+/g, " ").trim();
-
-    // 1) dd[./-]MM[./-]yyyy ara
     let dt = parseFlexibleDate(bodyText);
     if (dt.getTime() > 0) return dt.toISOString();
-
-    // 2) Halen bulunamadıysa bazı blokları dene (başlık altı)
     const candidates = [];
     $('[class*="date"], [class*="time"], h1, h2, .content, .detail, .page-content')
       .each((_, el) => candidates.push($(el).text()));
@@ -78,15 +67,17 @@ async function fetchDetailDateISO(url) {
       const d = parseFlexibleDate(t);
       if (d.getTime() > 0) return d.toISOString();
     }
-
     return null;
   } catch {
     return null;
   }
 }
 
-/* Bir sayfadaki duyuruları çek – GENİŞLETİLMİŞ seçici ile */
+/* Bir sayfadaki duyuruları çek – 1 saniye beklemeli */
 async function fetchPage(listId, page = 1) {
+  // ⏳ Dinamik yüklenen ilk duyuruya fırsat ver
+  await new Promise(r => setTimeout(r, 1000));
+
   const res = await fetch(LIST_URL(listId, page), {
     headers: { "User-Agent": "GaziDuyuruBot/1.0", "Accept-Language":"tr-TR,tr;q=0.9" }
   });
@@ -96,16 +87,14 @@ async function fetchPage(listId, page = 1) {
 
   const out = [];
 
-  // 1) Önce klasik kart yapısı (varsa)
+  // 1️⃣ Klasik kart yapısı
   $(".subpage-ann-single").each((idx, el) => {
     const $el = $(el);
-    const $a  = $el.find("a[href]").first(); // genişlettik
+    const $a  = $el.find("a[href]").first();
     if (!$a.length) return;
-
     const href  = $a.attr("href") || "#";
     const url   = href.startsWith("http") ? href : ORIGIN + href;
     const title = $a.text().replace(/\s+/g," ").trim();
-
     const $d    = $el.find(".subpage-ann-date").first();
     const day   = $d.find(".ann-day").text().trim();
     const mon   = $d.find(".ann-month").text().trim();
@@ -129,34 +118,29 @@ async function fetchPage(listId, page = 1) {
     });
   });
 
-  // 2) Klasik kartla yakalanmayan "üstteki 1–2 özel duyuru" için:
-  //    Listede görünen tüm duyuru linklerini ara.
+  // 2️⃣ Sayfadaki diğer /view/announcement/ linkleri (üstteki sabitler dâhil)
   const links = new Set(out.map(x => x.url.toLowerCase()));
   $("a[href*='/view/announcement/']").each((idx, a) => {
     const href = $(a).attr("href");
     if (!href) return;
     const url = href.startsWith("http") ? href : ORIGIN + href;
     const key = url.toLowerCase();
-    if (links.has(key)) return; // zaten eklendi
-
+    if (links.has(key)) return;
     const title = $(a).text().replace(/\s+/g," ").trim();
     if (!title) return;
-
-    // Tarihi kartın yakınından tahmin etmeyi dene
     let contextText = $(a).closest("li, .row, .col, .container, .content, .subpage-ann-single").text();
     contextText = (contextText || "").replace(/\s+/g," ").trim();
     let dt = parseFlexibleDate(contextText);
-
     out.push({
       listId, title, url,
       dateText: dt.getTime() > 0 ? contextText : "Tarih Yok",
       dateISO: dt.getTime() > 0 ? dt.toISOString() : new Date(0).toISOString(),
-      rank: (page * 10000) + (1000 + idx) // ikinci dal ekleri alta
+      rank: (page * 10000) + (1000 + idx)
     });
     links.add(key);
   });
 
-  // 3) Tarihi hâlâ 1970 (geçersiz) kalan öğeler için detay sayfasından tarih çek (yalnızca ilk 8 tanesine)
+  // 3️⃣ Hâlâ tarihi 1970 olanları detaydan getir (yalnızca ilk 8)
   const needDetail = out.filter(x => new Date(x.dateISO).getTime() <= 0).slice(0, 8);
   await Promise.all(needDetail.map(async it => {
     const iso = await fetchDetailDateISO(it.url);
@@ -166,7 +150,7 @@ async function fetchPage(listId, page = 1) {
   return out;
 }
 
-/* Bir listenin tüm sayfaları (boşa kadar) */
+/* Bir listenin tüm sayfaları */
 async function fetchWholeList(listId, maxPages = 10) {
   const all = [];
   for (let p = 1; p <= maxPages; p++) {
@@ -177,19 +161,17 @@ async function fetchWholeList(listId, maxPages = 10) {
   return all;
 }
 
-/* API */
+/* API handler */
 export default async function handler(req, res) {
   try {
     res.setHeader("Access-Control-Allow-Origin", "*");
-
     const lists = (req.query.lists?.toString() || "1,2,3")
       .split(",").map(s => parseInt(s,10)).filter(Boolean);
-    const maxPages = parseInt(req.query.maxPages || "5", 10);
-
+    const maxPages = parseInt(req.query.maxPages || "5",10);
     const results = await Promise.all(lists.map(id => fetchWholeList(id, maxPages)));
     const flat = results.flat();
 
-    /* URL’ye göre benzersizleştir (listeler arası kopyaları at) */
+    // 🔄 URL'e göre benzersizleştir
     const uniq = new Map();
     for (const it of flat) {
       const key = (it.url || "").toLowerCase();
@@ -197,16 +179,15 @@ export default async function handler(req, res) {
     }
     const all = Array.from(uniq.values());
 
-    /* Yeni → eski; aynı günse önce gelen üste (rank) */
-    all.sort((a,b) => {
+    // ⏱ Yeni → Eski
+    all.sort((a,b)=>{
       const t = new Date(b.dateISO) - new Date(a.dateISO);
-      if (t !== 0) return t;
-      return a.rank - b.rank;
+      return t !== 0 ? t : a.rank - b.rank;
     });
 
     res.setHeader("Cache-Control","s-maxage=300, stale-while-revalidate=600");
     res.status(200).json({ ok:true, count: all.length, items: all });
-  } catch (e) {
-    res.status(500).json({ ok:false, error: e.message });
+  } catch(e) {
+    res.status(500).json({ ok:false, error:e.message });
   }
 }
