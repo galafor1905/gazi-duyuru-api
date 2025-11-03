@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 
-const ORIGIN = "https://gaziodm.gazi.edu.tr";
-const LIST_URL = (id, page=1) =>
+const ORIGIN = "https://gazi-universitesi.gazi.edu.tr";
+const LIST_URL = (id, page = 1) =>
   `${ORIGIN}/view/announcement-list?id=${id}&type=1&SearchString=&dates=&date=&page=${page}`;
 
 const TR_AYLAR = {Ocak:0,Şubat:1,Mart:2,Nisan:3,Mayıs:4,Haziran:5,Temmuz:6,Ağustos:7,Eylül:8,Ekim:9,Kasım:10,Aralık:11};
