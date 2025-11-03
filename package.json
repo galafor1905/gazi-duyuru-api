@@ -1,0 +1,7 @@
+{
+  "name": "gazi-duyuru-api",
+  "type": "module",
+  "dependencies": {
+    "cheerio": "^1.0.0"
+  }
+}
